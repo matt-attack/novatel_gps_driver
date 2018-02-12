@@ -35,7 +35,7 @@
 #include <boost/algorithm/string/split.hpp>
 #include <boost/algorithm/string/classification.hpp>
 
-#include <ros/ros.h>
+#include <swri_roscpp/logging.h>
 
 #include <swri_string_util/string_util.h>
 #include <novatel_gps_driver/parsers/header.h>
@@ -543,9 +543,9 @@ namespace novatel_gps_driver
   }
 
   void NovatelMessageExtractor::GetGpsFixMessage(
-      const novatel_gps_msgs::Gprmc& gprmc,
-      const novatel_gps_msgs::Gpgga& gpgga,
-      gps_common::GPSFixPtr gps_fix)
+      const novatel_gps_msgs::msg::Gprmc& gprmc,
+      const novatel_gps_msgs::msg::Gpgga& gpgga,
+      gps_common_msgs::msg::GPSFix::SharedPtr gps_fix)
   {
     gps_fix->header.stamp = gpgga.header.stamp;
     gps_fix->altitude = gpgga.alt;
@@ -583,7 +583,7 @@ namespace novatel_gps_driver
     gps_fix->track = gprmc.track;
     // gps_fix.vdop = ERR_INIT_HIGH;
 
-    gps_fix->status.status = gps_common::GPSStatus::STATUS_FIX;
+    gps_fix->status.status = gps_common_msgs::msg::GPSStatus::STATUS_FIX;
     gps_fix->status.satellites_used = static_cast<uint16_t>(gpgga.num_sats);
 
   }

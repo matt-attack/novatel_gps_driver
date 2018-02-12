@@ -28,6 +28,7 @@
 // *****************************************************************************
 
 #include <sstream>
+#include <iomanip>
 #include <net/ethernet.h>
 #include <netinet/udp.h>
 #include <netinet/tcp.h>
@@ -37,8 +38,10 @@
 #include <boost/algorithm/string/join.hpp>
 #include <boost/make_shared.hpp>
 
-#include <ros/ros.h>
-#include <tf/tf.h>
+#include <swri_roscpp/logging.h>
+#include <swri_roscpp/time.h>
+#include <tf2/LinearMath/Quaternion.h>
+#include <tf2_geometry_msgs/tf2_geometry_msgs.h>
 
 namespace novatel_gps_driver
 {
@@ -174,7 +177,7 @@ namespace novatel_gps_driver
     is_connected_ = false;
   }
 
-  NovatelGps::ReadResult NovatelGps::ProcessData()
+  NovatelGps::ReadResult NovatelGps::ProcessData(rclcpp::Time stamp)
   {
     NovatelGps::ReadResult read_result = ReadData();
 
@@ -183,7 +186,7 @@ namespace novatel_gps_driver
       return read_result;
     }
 
-    ros::Time stamp = ros::Time::now();
+    //rclcpp::Time stamp = ros::Time::now();
     std::vector<NmeaSentence> nmea_sentences;
     std::vector<NovatelSentence> novatel_sentences;
     std::vector<BinaryMessage> binary_messages;
@@ -279,21 +282,21 @@ namespace novatel_gps_driver
     return read_result;
   }
 
-  void NovatelGps::GetNovatelPositions(std::vector<novatel_gps_msgs::NovatelPositionPtr>& positions)
+  void NovatelGps::GetNovatelPositions(std::vector<novatel_gps_msgs::msg::NovatelPosition::SharedPtr>& positions)
   {
     positions.clear();
     positions.insert(positions.end(), novatel_positions_.begin(), novatel_positions_.end());
     novatel_positions_.clear();
   }
 
-  void NovatelGps::GetNovatelVelocities(std::vector<novatel_gps_msgs::NovatelVelocityPtr>& velocities)
+  void NovatelGps::GetNovatelVelocities(std::vector<novatel_gps_msgs::msg::NovatelVelocity::SharedPtr>& velocities)
   {
     velocities.resize(novatel_velocities_.size());
     std::copy(novatel_velocities_.begin(), novatel_velocities_.end(), velocities.begin());
     novatel_velocities_.clear();
   }
 
-  void NovatelGps::GetFixMessages(std::vector<gps_common::GPSFixPtr>& fix_messages)
+  void NovatelGps::GetFixMessages(std::vector<gps_common_msgs::msg::GPSFix::SharedPtr>& fix_messages)
   {
     // Clear out the fix_messages list before filling it
     fix_messages.clear();
@@ -387,7 +390,7 @@ namespace novatel_gps_driver
         {
           // If we have a position message (or don't need one), create and fill
           // a GPS fix message
-          gps_common::GPSFixPtr gps_fix = boost::make_shared<gps_common::GPSFix>();
+          gps_common_msgs::msg::GPSFix::SharedPtr gps_fix = std::make_shared<gps_common_msgs::msg::GPSFix>();
           // Fill GPS fix message using the messages at the front of the two
           // sync queues
           extractor_.GetGpsFixMessage(
@@ -413,7 +416,7 @@ namespace novatel_gps_driver
             gps_fix->position_covariance[8] = sigma_z * sigma_z;
 
             gps_fix->position_covariance_type =
-                gps_common::GPSFix::COVARIANCE_TYPE_DIAGONAL_KNOWN;
+                gps_common_msgs::msg::GPSFix::COVARIANCE_TYPE_DIAGONAL_KNOWN;
 
             if (pop_position)
             {
@@ -433,77 +436,77 @@ namespace novatel_gps_driver
     }  // while (gpgga and gprmc buffers contain messages)
   }
 
-  void NovatelGps::GetNovatelCorrectedImuData(std::vector<novatel_gps_msgs::NovatelCorrectedImuDataPtr>& imu_messages)
+  void NovatelGps::GetNovatelCorrectedImuData(std::vector<novatel_gps_msgs::msg::NovatelCorrectedImuData::SharedPtr>& imu_messages)
   {
     imu_messages.clear();
     imu_messages.insert(imu_messages.end(), corrimudata_msgs_.begin(), corrimudata_msgs_.end());
     corrimudata_msgs_.clear();
   }
 
-  void NovatelGps::GetGpggaMessages(std::vector<novatel_gps_msgs::GpggaPtr>& gpgga_messages)
+  void NovatelGps::GetGpggaMessages(std::vector<novatel_gps_msgs::msg::Gpgga::SharedPtr>& gpgga_messages)
   {
     gpgga_messages.clear();
     gpgga_messages.insert(gpgga_messages.end(), gpgga_msgs_.begin(), gpgga_msgs_.end());
     gpgga_msgs_.clear();
   }
 
-  void NovatelGps::GetGpgsaMessages(std::vector<novatel_gps_msgs::GpgsaPtr>& gpgsa_messages)
+  void NovatelGps::GetGpgsaMessages(std::vector<novatel_gps_msgs::msg::Gpgsa::SharedPtr>& gpgsa_messages)
   {
     gpgsa_messages.resize(gpgsa_msgs_.size());
     std::copy(gpgsa_msgs_.begin(), gpgsa_msgs_.end(), gpgsa_messages.begin());
     gpgsa_msgs_.clear();
   }
 
-  void NovatelGps::GetGpgsvMessages(std::vector<novatel_gps_msgs::GpgsvPtr>& gpgsv_messages)
+  void NovatelGps::GetGpgsvMessages(std::vector<novatel_gps_msgs::msg::Gpgsv::SharedPtr>& gpgsv_messages)
   {
     gpgsv_messages.resize(gpgsv_msgs_.size());
     std::copy(gpgsv_msgs_.begin(), gpgsv_msgs_.end(), gpgsv_messages.begin());
     gpgsv_msgs_.clear();
   }
 
-  void NovatelGps::GetGprmcMessages(std::vector<novatel_gps_msgs::GprmcPtr>& gprmc_messages)
+  void NovatelGps::GetGprmcMessages(std::vector<novatel_gps_msgs::msg::Gprmc::SharedPtr>& gprmc_messages)
   {
     gprmc_messages.clear();
     gprmc_messages.insert(gprmc_messages.end(), gprmc_msgs_.begin(), gprmc_msgs_.end());
     gprmc_msgs_.clear();
   }
 
-  void NovatelGps::GetInscovMessages(std::vector<novatel_gps_msgs::InscovPtr>& inscov_messages)
+  void NovatelGps::GetInscovMessages(std::vector<novatel_gps_msgs::msg::Inscov::SharedPtr>& inscov_messages)
   {
     inscov_messages.clear();
     inscov_messages.insert(inscov_messages.end(), inscov_msgs_.begin(), inscov_msgs_.end());
     inscov_msgs_.clear();
   }
 
-  void NovatelGps::GetInspvaMessages(std::vector<novatel_gps_msgs::InspvaPtr>& inspva_messages)
+  void NovatelGps::GetInspvaMessages(std::vector<novatel_gps_msgs::msg::Inspva::SharedPtr>& inspva_messages)
   {
     inspva_messages.clear();
     inspva_messages.insert(inspva_messages.end(), inspva_msgs_.begin(), inspva_msgs_.end());
     inspva_msgs_.clear();
   }
 
-  void NovatelGps::GetInsstdevMessages(std::vector<novatel_gps_msgs::InsstdevPtr>& insstdev_messages)
+  void NovatelGps::GetInsstdevMessages(std::vector<novatel_gps_msgs::msg::Insstdev::SharedPtr>& insstdev_messages)
   {
     insstdev_messages.clear();
     insstdev_messages.insert(insstdev_messages.end(), insstdev_msgs_.begin(), insstdev_msgs_.end());
     insstdev_msgs_.clear();
   }
 
-  void NovatelGps::GetRangeMessages(std::vector<novatel_gps_msgs::RangePtr>& range_messages)
+  void NovatelGps::GetRangeMessages(std::vector<novatel_gps_msgs::msg::Range::SharedPtr>& range_messages)
   {
     range_messages.resize(range_msgs_.size());
     std::copy(range_msgs_.begin(), range_msgs_.end(), range_messages.begin());
     range_msgs_.clear();
   }
 
-  void NovatelGps::GetTimeMessages(std::vector<novatel_gps_msgs::TimePtr>& time_messages)
+  void NovatelGps::GetTimeMessages(std::vector<novatel_gps_msgs::msg::GpsTime::SharedPtr>& time_messages)
   {
     time_messages.resize(time_msgs_.size());
     std::copy(time_msgs_.begin(), time_msgs_.end(), time_messages.begin());
     time_msgs_.clear();
   }
 
-  void NovatelGps::GetTrackstatMessages(std::vector<novatel_gps_msgs::TrackstatPtr>& trackstat_msgs)
+  void NovatelGps::GetTrackstatMessages(std::vector<novatel_gps_msgs::msg::Trackstat::SharedPtr>& trackstat_msgs)
   {
     trackstat_msgs.resize(trackstat_msgs_.size());
     std::copy(trackstat_msgs_.begin(), trackstat_msgs_.end(), trackstat_msgs.begin());
@@ -633,7 +636,7 @@ namespace novatel_gps_driver
               io_service_,
               boost::asio::ip::udp::endpoint(boost::asio::ip::udp::v4(),
                                              port_num)));
-          boost::array<char, 1> recv_buf;
+          std::array<char, 1> recv_buf;
           udp_endpoint_ = boost::make_shared<boost::asio::ip::udp::endpoint>();
           boost::system::error_code error;
 
@@ -831,7 +834,8 @@ namespace novatel_gps_driver
 
         // Add a slight delay after reading packets; if the node is being tested offline
         // and this loop is hammering the TCP, logs won't output properly.
-        ros::Duration(0.001).sleep();
+        //ros::Duration(0.001).sleep();
+        rclcpp::sleep_for(std::chrono::nanoseconds(1000000));
 
         return READ_SUCCESS;
       }
@@ -865,7 +869,7 @@ namespace novatel_gps_driver
     return READ_ERROR;
   }
 
-  void NovatelGps::GetImuMessages(std::vector<sensor_msgs::ImuPtr>& imu_messages)
+  void NovatelGps::GetImuMessages(std::vector<sensor_msgs::msg::Imu::SharedPtr>& imu_messages)
   {
     imu_messages.clear();
     imu_messages.insert(imu_messages.end(), imu_msgs_.begin(), imu_msgs_.end());
@@ -890,8 +894,8 @@ namespace novatel_gps_driver
     // Only do anything if we have both CORRIMUDATA and INSPVA messages.
     while (!corrimudata_queue_.empty() && !inspva_queue_.empty())
     {
-      novatel_gps_msgs::NovatelCorrectedImuDataPtr corrimudata = corrimudata_queue_.front();
-      novatel_gps_msgs::InspvaPtr inspva = inspva_queue_.front();
+      novatel_gps_msgs::msg::NovatelCorrectedImuData::SharedPtr corrimudata = corrimudata_queue_.front();
+      novatel_gps_msgs::msg::Inspva::SharedPtr inspva = inspva_queue_.front();
 
       double corrimudata_time = corrimudata->gps_week_num * SECONDS_PER_WEEK + corrimudata->gps_seconds;
       double inspva_time = inspva->novatel_msg_header.gps_week_num *
@@ -919,12 +923,16 @@ namespace novatel_gps_driver
       corrimudata_queue_.pop();
 
       // Now we can combine them together to make an Imu message.
-      sensor_msgs::ImuPtr imu = boost::make_shared<sensor_msgs::Imu>();
+      sensor_msgs::msg::Imu::SharedPtr imu = std::make_shared<sensor_msgs::msg::Imu>();
 
       imu->header.stamp = corrimudata->header.stamp;
-      imu->orientation = tf::createQuaternionMsgFromRollPitchYaw(inspva->roll * DEGREES_TO_RADIANS,
-                                              -(inspva->pitch) * DEGREES_TO_RADIANS,
-                                              -(inspva->azimuth) * DEGREES_TO_RADIANS);
+      tf2::Quaternion q;
+      q.setRPY(inspva->roll * DEGREES_TO_RADIANS,
+                 -(inspva->pitch) * DEGREES_TO_RADIANS,
+                 -(inspva->azimuth) * DEGREES_TO_RADIANS);
+      imu->orientation = tf2::toMsg(q);//tf::createQuaternionMsgFromRollPitchYaw(inspva->roll * DEGREES_TO_RADIANS,
+                                           //   -(inspva->pitch) * DEGREES_TO_RADIANS,
+                                            //  -(inspva->azimuth) * DEGREES_TO_RADIANS);
 
       if (latest_inscov_)
       {
@@ -975,13 +983,13 @@ namespace novatel_gps_driver
   }
 
   NovatelGps::ReadResult NovatelGps::ParseBinaryMessage(const BinaryMessage& msg,
-                                                        const ros::Time& stamp) throw(ParseException)
+                                                        const rclcpp::Time& stamp) throw(ParseException)
   {
     switch (msg.header_.message_id_)
     {
       case BestposParser::MESSAGE_ID:
       {
-        novatel_gps_msgs::NovatelPositionPtr position = bestpos_parser_.ParseBinary(msg);
+        novatel_gps_msgs::msg::NovatelPosition::SharedPtr position = bestpos_parser_.ParseBinary(msg);
         position->header.stamp = stamp;
         novatel_positions_.push_back(position);
         position_sync_buffer_.push_back(position);
@@ -989,14 +997,14 @@ namespace novatel_gps_driver
       }
       case BestvelParser::MESSAGE_ID:
       {
-        novatel_gps_msgs::NovatelVelocityPtr velocity = bestvel_parser_.ParseBinary(msg);
+        novatel_gps_msgs::msg::NovatelVelocity::SharedPtr velocity = bestvel_parser_.ParseBinary(msg);
         velocity->header.stamp = stamp;
         novatel_velocities_.push_back(velocity);
         break;
       }
       case CorrImuDataParser::MESSAGE_ID:
       {
-        novatel_gps_msgs::NovatelCorrectedImuDataPtr imu = corrimudata_parser_.ParseBinary(msg);
+        novatel_gps_msgs::msg::NovatelCorrectedImuData::SharedPtr imu = corrimudata_parser_.ParseBinary(msg);
         imu->header.stamp = stamp;
         corrimudata_msgs_.push_back(imu);
         corrimudata_queue_.push(imu);
@@ -1010,7 +1018,7 @@ namespace novatel_gps_driver
       }
       case InscovParser::MESSAGE_ID:
       {
-        novatel_gps_msgs::InscovPtr inscov = inscov_parser_.ParseBinary(msg);
+        novatel_gps_msgs::msg::Inscov::SharedPtr inscov = inscov_parser_.ParseBinary(msg);
         inscov->header.stamp = stamp;
         inscov_msgs_.push_back(inscov);
         latest_inscov_ = inscov;
@@ -1018,7 +1026,7 @@ namespace novatel_gps_driver
       }
       case InspvaParser::MESSAGE_ID:
       {
-        novatel_gps_msgs::InspvaPtr inspva = inspva_parser_.ParseBinary(msg);
+        novatel_gps_msgs::msg::Inspva::SharedPtr inspva = inspva_parser_.ParseBinary(msg);
         inspva->header.stamp = stamp;
         inspva_msgs_.push_back(inspva);
         inspva_queue_.push(inspva);
@@ -1032,7 +1040,7 @@ namespace novatel_gps_driver
       }
       case InsstdevParser::MESSAGE_ID:
       {
-        novatel_gps_msgs::InsstdevPtr insstdev = insstdev_parser_.ParseBinary(msg);
+        novatel_gps_msgs::msg::Insstdev::SharedPtr insstdev = insstdev_parser_.ParseBinary(msg);
         insstdev->header.stamp = stamp;
         insstdev_msgs_.push_back(insstdev);
         latest_insstdev_ = insstdev;
@@ -1040,14 +1048,14 @@ namespace novatel_gps_driver
       }
       case RangeParser::MESSAGE_ID:
       {
-        novatel_gps_msgs::RangePtr range = range_parser_.ParseBinary(msg);
+        novatel_gps_msgs::msg::Range::SharedPtr range = range_parser_.ParseBinary(msg);
         range->header.stamp = stamp;
         range_msgs_.push_back(range);
         break;
       }
       case TimeParser::MESSAGE_ID:
       {
-        novatel_gps_msgs::TimePtr time = time_parser_.ParseBinary(msg);
+        novatel_gps_msgs::msg::GpsTime::SharedPtr time = time_parser_.ParseBinary(msg);
         utc_offset_ = time->utc_offset;
         ROS_DEBUG("Got a new TIME with offset %f. UTC offset is %f", time->utc_offset, utc_offset_);
         time->header.stamp = stamp;
@@ -1056,7 +1064,7 @@ namespace novatel_gps_driver
       }
       case TrackstatParser::MESSAGE_ID:
       {
-        novatel_gps_msgs::TrackstatPtr trackstat = trackstat_parser_.ParseBinary(msg);
+        novatel_gps_msgs::msg::Trackstat::SharedPtr trackstat = trackstat_parser_.ParseBinary(msg);
         trackstat->header.stamp = stamp;
         trackstat_msgs_.push_back(trackstat);
         break;
@@ -1070,19 +1078,19 @@ namespace novatel_gps_driver
   }
 
   NovatelGps::ReadResult NovatelGps::ParseNmeaSentence(const NmeaSentence& sentence,
-                                                       const ros::Time& stamp,
+                                                       const rclcpp::Time& stamp,
                                                        double most_recent_utc_time) throw(ParseException)
   {
     if (sentence.id == GpggaParser::MESSAGE_NAME)
     {
-      novatel_gps_msgs::GpggaPtr gpgga = gpgga_parser_.ParseAscii(sentence);
+      novatel_gps_msgs::msg::Gpgga::SharedPtr gpgga = gpgga_parser_.ParseAscii(sentence);
 
       if (most_recent_utc_time < gpgga->utc_seconds)
       {
         most_recent_utc_time = gpgga->utc_seconds;
       }
 
-      gpgga->header.stamp = stamp - ros::Duration(most_recent_utc_time - gpgga->utc_seconds);
+      gpgga->header.stamp = stamp - swri::Duration(most_recent_utc_time - gpgga->utc_seconds);
 
       if (gpgga_parser_.WasLastGpsValid())
       {
@@ -1099,14 +1107,14 @@ namespace novatel_gps_driver
     }
     else if (sentence.id == GprmcParser::MESSAGE_NAME)
     {
-      novatel_gps_msgs::GprmcPtr gprmc = gprmc_parser_.ParseAscii(sentence);
+      novatel_gps_msgs::msg::Gprmc::SharedPtr gprmc = gprmc_parser_.ParseAscii(sentence);
 
       if (most_recent_utc_time < gprmc->utc_seconds)
       {
         most_recent_utc_time = gprmc->utc_seconds;
       }
 
-      gprmc->header.stamp = stamp - ros::Duration(most_recent_utc_time - gprmc->utc_seconds);
+      gprmc->header.stamp = stamp - swri::Duration(most_recent_utc_time - gprmc->utc_seconds);
 
       if (gprmc_parser_.WasLastGpsValid())
       {
@@ -1123,12 +1131,12 @@ namespace novatel_gps_driver
     }
     else if (sentence.id == GpgsaParser::MESSAGE_NAME)
     {
-      novatel_gps_msgs::GpgsaPtr gpgsa = gpgsa_parser_.ParseAscii(sentence);
+      novatel_gps_msgs::msg::Gpgsa::SharedPtr gpgsa = gpgsa_parser_.ParseAscii(sentence);
       gpgsa_msgs_.push_back(gpgsa);
     }
     else if (sentence.id == GpgsvParser::MESSAGE_NAME)
     {
-      novatel_gps_msgs::GpgsvPtr gpgsv = gpgsv_parser_.ParseAscii(sentence);
+      novatel_gps_msgs::msg::Gpgsv::SharedPtr gpgsv = gpgsv_parser_.ParseAscii(sentence);
       gpgsv_msgs_.push_back(gpgsv);
     }
     else
@@ -1140,24 +1148,24 @@ namespace novatel_gps_driver
   }
 
   NovatelGps::ReadResult NovatelGps::ParseNovatelSentence(const NovatelSentence& sentence,
-                                                          const ros::Time& stamp) throw(ParseException)
+                                                          const rclcpp::Time& stamp) throw(ParseException)
   {
     if (sentence.id == "BESTPOSA")
     {
-      novatel_gps_msgs::NovatelPositionPtr position = bestpos_parser_.ParseAscii(sentence);
+      novatel_gps_msgs::msg::NovatelPosition::SharedPtr position = bestpos_parser_.ParseAscii(sentence);
       position->header.stamp = stamp;
       novatel_positions_.push_back(position);
       position_sync_buffer_.push_back(position);
     }
     else if (sentence.id == "BESTVELA")
     {
-      novatel_gps_msgs::NovatelVelocityPtr velocity = bestvel_parser_.ParseAscii(sentence);
+      novatel_gps_msgs::msg::NovatelVelocity::SharedPtr velocity = bestvel_parser_.ParseAscii(sentence);
       velocity->header.stamp = stamp;
       novatel_velocities_.push_back(velocity);
     }
     else if (sentence.id == "CORRIMUDATAA")
     {
-      novatel_gps_msgs::NovatelCorrectedImuDataPtr imu = corrimudata_parser_.ParseAscii(sentence);
+      novatel_gps_msgs::msg::NovatelCorrectedImuData::SharedPtr imu = corrimudata_parser_.ParseAscii(sentence);
       imu->header.stamp = stamp;
       corrimudata_msgs_.push_back(imu);
       corrimudata_queue_.push(imu);
@@ -1170,14 +1178,14 @@ namespace novatel_gps_driver
     }
     else if (sentence.id == "INSCOVA")
     {
-      novatel_gps_msgs::InscovPtr inscov = inscov_parser_.ParseAscii(sentence);
+      novatel_gps_msgs::msg::Inscov::SharedPtr inscov = inscov_parser_.ParseAscii(sentence);
       inscov->header.stamp = stamp;
       inscov_msgs_.push_back(inscov);
       latest_inscov_ = inscov;
     }
     else if (sentence.id == "INSPVAA")
     {
-      novatel_gps_msgs::InspvaPtr inspva = inspva_parser_.ParseAscii(sentence);
+      novatel_gps_msgs::msg::Inspva::SharedPtr inspva = inspva_parser_.ParseAscii(sentence);
       inspva->header.stamp = stamp;
       inspva_msgs_.push_back(inspva);
       inspva_queue_.push(inspva);
@@ -1190,14 +1198,14 @@ namespace novatel_gps_driver
     }
     else if (sentence.id == "INSSTDEVA")
     {
-      novatel_gps_msgs::InsstdevPtr insstdev = insstdev_parser_.ParseAscii(sentence);
+      novatel_gps_msgs::msg::Insstdev::SharedPtr insstdev = insstdev_parser_.ParseAscii(sentence);
       insstdev->header.stamp = stamp;
       insstdev_msgs_.push_back(insstdev);
       latest_insstdev_ = insstdev;
     }
     else if (sentence.id == "TIMEA")
     {
-      novatel_gps_msgs::TimePtr time = time_parser_.ParseAscii(sentence);
+      novatel_gps_msgs::msg::GpsTime::SharedPtr time = time_parser_.ParseAscii(sentence);
       utc_offset_ = time->utc_offset;
       ROS_DEBUG("Got a new TIME with offset %f. UTC offset is %f", time->utc_offset, utc_offset_);
       time->header.stamp = stamp;
@@ -1205,13 +1213,13 @@ namespace novatel_gps_driver
     }
     else if (sentence.id == "RANGEA")
     {
-      novatel_gps_msgs::RangePtr range = range_parser_.ParseAscii(sentence);
+      novatel_gps_msgs::msg::Range::SharedPtr range = range_parser_.ParseAscii(sentence);
       range->header.stamp = stamp;
       range_msgs_.push_back(range);
     }
     else if (sentence.id == "TRACKSTATA")
     {
-      novatel_gps_msgs::TrackstatPtr trackstat = trackstat_parser_.ParseAscii(sentence);
+      novatel_gps_msgs::msg::Trackstat::SharedPtr trackstat = trackstat_parser_.ParseAscii(sentence);
       trackstat->header.stamp = stamp;
       trackstat_msgs_.push_back(trackstat);
     }

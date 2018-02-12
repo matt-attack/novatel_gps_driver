@@ -130,38 +130,41 @@
 #include <boost/accumulators/statistics/variance.hpp>
 #include <boost/circular_buffer.hpp>
 
-#include <diagnostic_msgs/DiagnosticStatus.h>
+#include <diagnostic_msgs/msg/diagnostic_status.hpp>
 #include <diagnostic_updater/diagnostic_updater.h>
 #include <diagnostic_updater/publisher.h>
-#include <gps_common/GPSFix.h>
-#include <nodelet/nodelet.h>
-#include <novatel_gps_msgs/NovatelCorrectedImuData.h>
-#include <novatel_gps_msgs/NovatelFRESET.h>
-#include <novatel_gps_msgs/NovatelMessageHeader.h>
-#include <novatel_gps_msgs/NovatelPosition.h>
-#include <novatel_gps_msgs/NovatelVelocity.h>
-#include <novatel_gps_msgs/Gpgga.h>
-#include <novatel_gps_msgs/Gprmc.h>
-#include <novatel_gps_msgs/Range.h>
-#include <novatel_gps_msgs/Time.h>
+#include <gps_common_msgs/msg/gps_fix.hpp>
+//#include <nodelet/nodelet.h>
+#include <novatel_gps_msgs/msg/novatel_corrected_imu_data.hpp>
+#include <novatel_gps_msgs/srv/novatel_freset.hpp>
+#include <novatel_gps_msgs/msg/novatel_message_header.hpp>
+#include <novatel_gps_msgs/msg/novatel_position.hpp>
+#include <novatel_gps_msgs/msg/novatel_velocity.hpp>
+#include <novatel_gps_msgs/msg/gpgga.hpp>
+#include <novatel_gps_msgs/msg/gprmc.hpp>
+#include <novatel_gps_msgs/msg/range.hpp>
+#include <novatel_gps_msgs/msg/gps_time.hpp>
 #include <novatel_gps_driver/novatel_gps.h>
-#include <ros/ros.h>
-#include <sensor_msgs/Imu.h>
-#include <sensor_msgs/NavSatFix.h>
-#include <std_msgs/Time.h>
+#include <rclcpp/rclcpp.hpp>
+#include <sensor_msgs/msg/imu.hpp>
+#include <sensor_msgs/msg/nav_sat_fix.hpp>
+#include <builtin_interfaces/msg/time.hpp>
 #include <swri_math_util/math_util.h>
+#include <swri_roscpp/node.h>
 #include <swri_roscpp/parameters.h>
 #include <swri_roscpp/publisher.h>
 #include <swri_roscpp/subscriber.h>
+#include <swri_roscpp/service_server.h>
 
 namespace stats = boost::accumulators;
 
 namespace novatel_gps_driver
 {
-  class NovatelGpsNodelet : public nodelet::Nodelet
+  class NovatelGpsNodelet : public swri::Node
   {
   public:
     NovatelGpsNodelet() :
+      Node("novatel_nodelet"),
       device_(""),
       connection_type_("serial"),
       polling_period_(0.05),
@@ -181,7 +184,7 @@ namespace novatel_gps_driver
       reconnect_delay_s_(0.5),
       use_binary_messages_(false),
       connection_(NovatelGps::SERIAL),
-      last_sync_(ros::TIME_MIN),
+      last_sync_(swri::TIME_MIN),
       rolling_offset_(stats::tag::rolling_window::window_size = 10),
       expected_rate_(20),
       device_timeouts_(0),
@@ -191,7 +194,7 @@ namespace novatel_gps_driver
       gps_insufficient_data_warnings_(0),
       publish_rate_warnings_(0),
       measurement_count_(0),
-      last_published_(ros::TIME_MIN),
+      last_published_(swri::TIME_MIN),
       imu_frame_id_(""),
       frame_id_("")
     {
@@ -208,8 +211,7 @@ namespace novatel_gps_driver
      */
     void onInit()
     {
-      ros::NodeHandle &node = getNodeHandle();
-      ros::NodeHandle &priv = getPrivateNodeHandle();
+      auto priv = nh_;
 
       swri::param(priv, "device", device_, device_);
       swri::param(priv, "imu_rate", imu_rate_, imu_rate_);
@@ -241,62 +243,62 @@ namespace novatel_gps_driver
       swri::param(priv, "wait_for_position", gps_.wait_for_position_, false);
 
       // Reset Service
-      reset_service_ = priv.advertiseService("freset", &NovatelGpsNodelet::resetService, this);
+      reset_service_ = swri::service<novatel_gps_msgs::srv::NovatelFRESET>(this, "freset", &NovatelGpsNodelet::resetService, this);
 
-      sync_sub_ = swri::Subscriber(node, "gps_sync", 100, &NovatelGpsNodelet::SyncCallback, this);
+      sync_sub_ = swri::Subscriber(this, "gps_sync", 100, &NovatelGpsNodelet::SyncCallback, this);
 
-      std::string gps_topic = node.resolveName("gps");
-      gps_pub_ = swri::advertise<gps_common::GPSFix>(node, gps_topic, 100);
-      fix_pub_ = swri::advertise<sensor_msgs::NavSatFix>(node, "fix", 100);
+      std::string gps_topic = "gps";//node.resolveName("gps");
+      gps_pub_ = swri::advertise<gps_common_msgs::msg::GPSFix>(this, gps_topic, 100);
+      fix_pub_ = swri::advertise<sensor_msgs::msg::NavSatFix>(this, "fix", 100);
 
       if (publish_nmea_messages_)
       {
-        gpgga_pub_ = swri::advertise<novatel_gps_msgs::Gpgga>(node,"gpgga", 100);
-        gprmc_pub_ = swri::advertise<novatel_gps_msgs::Gprmc>(node,"gprmc", 100);
+        gpgga_pub_ = swri::advertise<novatel_gps_msgs::msg::Gpgga>(this,"gpgga", 100);
+        gprmc_pub_ = swri::advertise<novatel_gps_msgs::msg::Gprmc>(this,"gprmc", 100);
       }
 
       if (publish_gpgsa_)
       {
-        gpgsa_pub_ = swri::advertise<novatel_gps_msgs::Gpgsa>(node, "gpgsa", 100);
+        gpgsa_pub_ = swri::advertise<novatel_gps_msgs::msg::Gpgsa>(this, "gpgsa", 100);
       }
 
       if (publish_imu_messages_)
       {
-        imu_pub_ = swri::advertise<sensor_msgs::Imu>(node, "imu", 100);
-        novatel_imu_pub_= swri::advertise<novatel_gps_msgs::NovatelCorrectedImuData>(node, "corrimudata", 100);
-        insstdev_pub_ = swri::advertise<novatel_gps_msgs::Insstdev>(node, "insstdev", 100);
-        inspva_pub_ = swri::advertise<novatel_gps_msgs::Inspva>(node, "inspva", 100);
-        inscov_pub_ = swri::advertise<novatel_gps_msgs::Inscov>(node, "inscov", 100);
+        imu_pub_ = swri::advertise<sensor_msgs::msg::Imu>(this, "imu", 100);
+        novatel_imu_pub_= swri::advertise<novatel_gps_msgs::msg::NovatelCorrectedImuData>(this, "corrimudata", 100);
+        insstdev_pub_ = swri::advertise<novatel_gps_msgs::msg::Insstdev>(this, "insstdev", 100);
+        inspva_pub_ = swri::advertise<novatel_gps_msgs::msg::Inspva>(this, "inspva", 100);
+        inscov_pub_ = swri::advertise<novatel_gps_msgs::msg::Inscov>(this, "inscov", 100);
       }
 
       if (publish_gpgsv_)
       {
-        gpgsv_pub_ = swri::advertise<novatel_gps_msgs::Gpgsv>(node, "gpgsv", 100);
+        gpgsv_pub_ = swri::advertise<novatel_gps_msgs::msg::Gpgsv>(this, "gpgsv", 100);
       }
 
       if (publish_novatel_positions_)
       { 
-        novatel_position_pub_ = swri::advertise<novatel_gps_msgs::NovatelPosition>(node, "bestpos", 100);
+        novatel_position_pub_ = swri::advertise<novatel_gps_msgs::msg::NovatelPosition>(this, "bestpos", 100);
       }
 
       if (publish_novatel_velocity_)
       {
-        novatel_velocity_pub_ = swri::advertise<novatel_gps_msgs::NovatelVelocity>(node, "bestvel", 100);
+        novatel_velocity_pub_ = swri::advertise<novatel_gps_msgs::msg::NovatelVelocity>(this, "bestvel", 100);
       }
 
       if (publish_range_messages_)
       {
-        range_pub_ = swri::advertise<novatel_gps_msgs::Range>(node, "range", 100);
+        range_pub_ = swri::advertise<novatel_gps_msgs::msg::Range>(this, "range", 100);
       }
 
       if (publish_time_messages_)
       {
-        time_pub_ = swri::advertise<novatel_gps_msgs::Time>(node, "time", 100);
+        time_pub_ = swri::advertise<novatel_gps_msgs::msg::GpsTime>(this, "time", 100);
       }
 
       if (publish_trackstat_)
       {
-        trackstat_pub_ = swri::advertise<novatel_gps_msgs::Trackstat>(node, "trackstat", 100);
+        trackstat_pub_ = swri::advertise<novatel_gps_msgs::msg::Trackstat>(this, "trackstat", 100);
       }
 
       hw_id_ = "Novatel GPS (" + device_ +")";
@@ -326,13 +328,13 @@ namespace novatel_gps_driver
         }
       }
       thread_ = boost::thread(&NovatelGpsNodelet::Spin, this);
-      NODELET_INFO("%s initialized", hw_id_.c_str());
+      ROS_INFO("%s initialized", hw_id_.c_str());
     }
 
-    void SyncCallback(const std_msgs::TimeConstPtr& sync)
+    void SyncCallback(const builtin_interfaces::msg::Time::SharedPtr sync)
     {
       boost::unique_lock<boost::mutex> lock(mutex_);
-      sync_times_.push_back(sync->data);
+      sync_times_.push_back(*sync);
     }
 
     /**
@@ -376,7 +378,7 @@ namespace novatel_gps_driver
         opts["insstdev" + format_suffix] = 1.0;
         if (!use_binary_messages_)
         {
-          NODELET_WARN("Using the ASCII message format with CORRIMUDATA logs is not recommended.  "
+          ROS_WARN("Using the ASCII message format with CORRIMUDATA logs is not recommended.  "
                        "A serial link will not be able to keep up with the data rate.");
         }
 
@@ -398,13 +400,13 @@ namespace novatel_gps_driver
       {
         opts["trackstat" + format_suffix] = 1.0;  // Trackstat
       }
-      while (ros::ok())
+      while (rclcpp::ok())
       {
         if (gps_.Connect(device_, connection_, opts))
         {
           // Connected to device. Begin reading/processing data
-          NODELET_INFO("%s connected to device", hw_id_.c_str());
-          while (gps_.IsConnected() && ros::ok())
+          ROS_INFO("%s connected to device", hw_id_.c_str());
+          while (gps_.IsConnected() && rclcpp::ok())
           {
             // Read data from the device and publish any received messages
             CheckDeviceForData();
@@ -418,14 +420,14 @@ namespace novatel_gps_driver
             }
 
             // Spin once to let the ROS callbacks fire
-            ros::spinOnce();
+            rclcpp::spin_some(nh_);
             // Sleep for a microsecond to prevent CPU hogging
             boost::this_thread::sleep(boost::posix_time::microseconds(1));
           }  // While (gps_.IsConnected() && ros::ok()) (inner loop to process data from device)
         }
         else  // Could not connect to the device
         {
-          NODELET_ERROR_THROTTLE(1, "Error connecting to device <%s:%s>: %s",
+          ROS_ERROR_THROTTLE(1, "Error connecting to device <%s:%s>: %s",
             connection_type_.c_str(),
             device_.c_str(),
             gps_.ErrorMsg().c_str());
@@ -433,11 +435,11 @@ namespace novatel_gps_driver
           error_msg_ = gps_.ErrorMsg();
         }
 
-        if (ros::ok())
+        if (rclcpp::ok())
         {
           // If ROS is still OK but we got disconnected, we're going to try
           // to reconnect, but wait just a bit so we don't spam the device.
-          ros::Duration(reconnect_delay_s_).sleep();
+          rclcpp::sleep_for(std::chrono::nanoseconds((int64_t)(reconnect_delay_s_*1000000000)));
         }
 
         // Poke the diagnostic updater. It will only fire diagnostics if
@@ -449,19 +451,19 @@ namespace novatel_gps_driver
         }
 
         // Spin once to let the ROS callbacks fire
-        ros::spinOnce();
+        rclcpp::spin_some(nh_);
         // Sleep for a microsecond to prevent CPU hogging
         boost::this_thread::sleep(boost::posix_time::microseconds(1));
 
         if (connection_ == NovatelGps::PCAP)
         {
           // If we're playing a PCAP file, we only want to play it once.
-          ros::shutdown();
+          rclcpp::shutdown();
         }
       }  // While (ros::ok) (outer loop to reconnect to device)
 
       gps_.Disconnect();
-      NODELET_INFO("%s disconnected and shut down", hw_id_.c_str());
+      ROS_INFO("%s disconnected and shut down", hw_id_.c_str());
     }
 
   private:
@@ -489,24 +491,24 @@ namespace novatel_gps_driver
     double reconnect_delay_s_;
     bool use_binary_messages_;
 
-    ros::Publisher fix_pub_;
-    ros::Publisher gps_pub_;
-    ros::Publisher imu_pub_;
-    ros::Publisher inscov_pub_;
-    ros::Publisher inspva_pub_;
-    ros::Publisher insstdev_pub_;
-    ros::Publisher novatel_imu_pub_;
-    ros::Publisher novatel_position_pub_;
-    ros::Publisher novatel_velocity_pub_;
-    ros::Publisher gpgga_pub_;
-    ros::Publisher gpgsv_pub_;
-    ros::Publisher gpgsa_pub_;
-    ros::Publisher gprmc_pub_;
-    ros::Publisher range_pub_;
-    ros::Publisher time_pub_;
-    ros::Publisher trackstat_pub_;
+    rclcpp::Publisher<sensor_msgs::msg::NavSatFix>::SharedPtr fix_pub_;
+    rclcpp::Publisher<gps_common_msgs::msg::GPSFix>::SharedPtr gps_pub_;
+    rclcpp::Publisher<sensor_msgs::msg::Imu>::SharedPtr imu_pub_;
+    rclcpp::Publisher<novatel_gps_msgs::msg::Inscov>::SharedPtr inscov_pub_;
+    rclcpp::Publisher<novatel_gps_msgs::msg::Inspva>::SharedPtr inspva_pub_;
+    rclcpp::Publisher<novatel_gps_msgs::msg::Insstdev>::SharedPtr insstdev_pub_;
+    rclcpp::Publisher<novatel_gps_msgs::msg::NovatelCorrectedImuData>::SharedPtr novatel_imu_pub_;
+    rclcpp::Publisher<novatel_gps_msgs::msg::NovatelPosition>::SharedPtr novatel_position_pub_;
+    rclcpp::Publisher<novatel_gps_msgs::msg::NovatelVelocity>::SharedPtr novatel_velocity_pub_;
+    rclcpp::Publisher<novatel_gps_msgs::msg::Gpgga>::SharedPtr gpgga_pub_;
+    rclcpp::Publisher<novatel_gps_msgs::msg::Gpgsv>::SharedPtr gpgsv_pub_;
+    rclcpp::Publisher<novatel_gps_msgs::msg::Gpgsa>::SharedPtr gpgsa_pub_;
+    rclcpp::Publisher<novatel_gps_msgs::msg::Gprmc>::SharedPtr gprmc_pub_;
+    rclcpp::Publisher<novatel_gps_msgs::msg::Range>::SharedPtr range_pub_;
+    rclcpp::Publisher<novatel_gps_msgs::msg::GpsTime>::SharedPtr time_pub_;
+    rclcpp::Publisher<novatel_gps_msgs::msg::Trackstat>::SharedPtr trackstat_pub_;
 
-    ros::ServiceServer reset_service_;
+    swri::ServiceServer reset_service_;
 
     NovatelGps::ConnectionType connection_;
     NovatelGps gps_;
@@ -516,11 +518,11 @@ namespace novatel_gps_driver
 
     /// Subscriber to listen for sync times from a DIO
     swri::Subscriber sync_sub_;
-    ros::Time last_sync_;
+    rclcpp::Time last_sync_;
     /// Buffer of sync message time stamps
-    boost::circular_buffer<ros::Time> sync_times_;
+    boost::circular_buffer<rclcpp::Time> sync_times_;
     /// Buffer of gps message time stamps
-    boost::circular_buffer<ros::Time> msg_times_;
+    boost::circular_buffer<rclcpp::Time> msg_times_;
     /// Stats on time offset
     stats::accumulator_set<float, stats::stats<
       stats::tag::max,
@@ -542,8 +544,8 @@ namespace novatel_gps_driver
     int32_t gps_insufficient_data_warnings_;
     int32_t publish_rate_warnings_;
     int32_t measurement_count_;
-    ros::Time last_published_;
-    novatel_gps_msgs::NovatelPositionPtr last_novatel_position_;
+    rclcpp::Time last_published_;
+    novatel_gps_msgs::msg::NovatelPosition::SharedPtr last_novatel_position_;
 
     std::string imu_frame_id_;
     std::string frame_id_;
@@ -551,27 +553,27 @@ namespace novatel_gps_driver
     /**
      * @brief Service request to reset the gps through FRESET
      */
-    bool resetService(novatel_gps_msgs::NovatelFRESET::Request& req,
-                      novatel_gps_msgs::NovatelFRESET::Response& res)
+    void resetService(const novatel_gps_msgs::srv::NovatelFRESET::Request::SharedPtr req,
+                      novatel_gps_msgs::srv::NovatelFRESET::Response::SharedPtr res)
     {
       if (gps_.IsConnected() == false)
       {
-        res.success = false;
+        res->success = false;
+        return;
       }
       
       // Formulate the reset command and send it to the device
       std::string command = "FRESET ";
-      command += req.target.length() ? "STANDARD" : req.target;
+      command += req->target.length() ? "STANDARD" : req->target;
       command += '\n';
       gps_.Write(command);
 
-      if (req.target.length() == 0)
+      if (req->target.length() == 0)
       {
         ROS_WARN("No FRESET target specified. Doing FRESET STANDARD. This may be undesired behavior.");
       }
 
-      res.success = true;
-      return true;
+      res->success = true;
     }
 
     /**
@@ -582,16 +584,16 @@ namespace novatel_gps_driver
      */
     void CheckDeviceForData()
     {
-      std::vector<novatel_gps_msgs::NovatelPositionPtr> position_msgs;
-      std::vector<gps_common::GPSFixPtr> fix_msgs;
-      std::vector<novatel_gps_msgs::GpggaPtr> gpgga_msgs;
-      std::vector<novatel_gps_msgs::GprmcPtr> gprmc_msgs;
+      std::vector<novatel_gps_msgs::msg::NovatelPosition::SharedPtr> position_msgs;
+      std::vector<gps_common_msgs::msg::GPSFix::SharedPtr> fix_msgs;
+      std::vector<novatel_gps_msgs::msg::Gpgga::SharedPtr> gpgga_msgs;
+      std::vector<novatel_gps_msgs::msg::Gprmc::SharedPtr> gprmc_msgs;
 
       // This call appears to block if the serial device is disconnected
-      NovatelGps::ReadResult result = gps_.ProcessData();
+      NovatelGps::ReadResult result = gps_.ProcessData(nh_->now());
       if (result == NovatelGps::READ_ERROR)
       {
-        NODELET_ERROR_THROTTLE(1, "Error reading from device <%s:%s>: %s",
+        ROS_ERROR_THROTTLE(1, "Error reading from device <%s:%s>: %s",
                                connection_type_.c_str(),
                                device_.c_str(),
                                gps_.ErrorMsg().c_str());
@@ -609,7 +611,7 @@ namespace novatel_gps_driver
       }
       else if (result == NovatelGps::READ_PARSE_FAILED)
       {
-        NODELET_ERROR("Error reading from device <%s:%s>: %s",
+        ROS_ERROR("Error reading from device <%s:%s>: %s",
                                connection_type_.c_str(),
                                device_.c_str(),
                                gps_.ErrorMsg().c_str());
@@ -661,51 +663,51 @@ namespace novatel_gps_driver
       // If TimeSync messages are available, CalculateTimeSync keeps
       // an acculumator of their offset, which is used to
       // calculate a rolling mean of the offset to apply to all messages
-      ros::Duration sync_offset(0); // If no TimeSyncs, assume 0 offset
-      if (last_sync_ != ros::TIME_MIN)
+      rclcpp::Duration sync_offset(0); // If no TimeSyncs, assume 0 offset
+      if (last_sync_ != swri::TIME_MIN)
       {
-        sync_offset = ros::Duration(stats::rolling_mean(rolling_offset_));
+        sync_offset = swri::Duration(stats::rolling_mean(rolling_offset_));
       }
-      NODELET_DEBUG_STREAM("GPS TimeSync offset is " << sync_offset);
+      //ROS_DEBUG_STREAM("GPS TimeSync offset is " << sync_offset);
 
       if (publish_nmea_messages_)
       {
         for (const auto& msg : gpgga_msgs)
         {
-          msg->header.stamp += sync_offset;
+          msg->header.stamp = rclcpp::Time(msg->header.stamp) + sync_offset;
           msg->header.frame_id = frame_id_;
-          gpgga_pub_.publish(msg);
+          gpgga_pub_->publish(msg);
         }
 
         for (const auto& msg : gprmc_msgs)
         {
-          msg->header.stamp += sync_offset;
+          msg->header.stamp = rclcpp::Time(msg->header.stamp) + sync_offset;
           msg->header.frame_id = frame_id_;
-          gprmc_pub_.publish(msg);
+          gprmc_pub_->publish(msg);
         }
       }
 
       if (publish_gpgsa_)
       {
-        std::vector<novatel_gps_msgs::GpgsaPtr> gpgsa_msgs;
+        std::vector<novatel_gps_msgs::msg::Gpgsa::SharedPtr> gpgsa_msgs;
         gps_.GetGpgsaMessages(gpgsa_msgs);
         for (const auto& msg : gpgsa_msgs)
         {
-          msg->header.stamp = ros::Time::now();
+          msg->header.stamp = nh_->now();
           msg->header.frame_id = frame_id_;
-          gpgsa_pub_.publish(msg);
+          gpgsa_pub_->publish(msg);
         }
       }
 
       if (publish_gpgsv_)
       {
-        std::vector<novatel_gps_msgs::GpgsvPtr> gpgsv_msgs;
+        std::vector<novatel_gps_msgs::msg::Gpgsv::SharedPtr> gpgsv_msgs;
         gps_.GetGpgsvMessages(gpgsv_msgs);
         for (const auto& msg : gpgsv_msgs)
         {
-          msg->header.stamp = ros::Time::now();
+          msg->header.stamp = nh_->now();
           msg->header.frame_id = frame_id_;
-          gpgsv_pub_.publish(msg);
+          gpgsv_pub_->publish(msg);
         }
       }
 
@@ -713,122 +715,122 @@ namespace novatel_gps_driver
       {
         for (const auto& msg : position_msgs)
         {
-          msg->header.stamp += sync_offset;
+          msg->header.stamp = rclcpp::Time(msg->header.stamp) + sync_offset;
           msg->header.frame_id = frame_id_;
-          novatel_position_pub_.publish(msg);
+          novatel_position_pub_->publish(msg);
         }
       }
 
       if (publish_novatel_velocity_)
       {
-        std::vector<novatel_gps_msgs::NovatelVelocityPtr> velocity_msgs;
+        std::vector<novatel_gps_msgs::msg::NovatelVelocity::SharedPtr> velocity_msgs;
         gps_.GetNovatelVelocities(velocity_msgs);
         for (const auto& msg : velocity_msgs)
         {
-          msg->header.stamp += sync_offset;
+          msg->header.stamp = rclcpp::Time(msg->header.stamp) + sync_offset;
           msg->header.frame_id = frame_id_;
-          novatel_velocity_pub_.publish(msg);
+          novatel_velocity_pub_->publish(msg);
         }
       }
       if (publish_time_messages_)
       {
-        std::vector<novatel_gps_msgs::TimePtr> time_msgs;
+        std::vector<novatel_gps_msgs::msg::GpsTime::SharedPtr> time_msgs;
         gps_.GetTimeMessages(time_msgs);
         for (const auto& msg : time_msgs)
         {
-          msg->header.stamp += sync_offset;
+          msg->header.stamp = rclcpp::Time(msg->header.stamp) + sync_offset;
           msg->header.frame_id = frame_id_;
-          time_pub_.publish(msg);
+          time_pub_->publish(msg);
         }
       }
       if (publish_range_messages_)
       {
-        std::vector<novatel_gps_msgs::RangePtr> range_msgs;
+        std::vector<novatel_gps_msgs::msg::Range::SharedPtr> range_msgs;
         gps_.GetRangeMessages(range_msgs);
         for (const auto& msg : range_msgs)
         {
-          msg->header.stamp += sync_offset;
+          msg->header.stamp = rclcpp::Time(msg->header.stamp) + sync_offset;
           msg->header.frame_id = frame_id_;
-          range_pub_.publish(msg);
+          range_pub_->publish(msg);
         }
       }
       if (publish_trackstat_)
       {
-        std::vector<novatel_gps_msgs::TrackstatPtr> trackstat_msgs;
+        std::vector<novatel_gps_msgs::msg::Trackstat::SharedPtr> trackstat_msgs;
         gps_.GetTrackstatMessages(trackstat_msgs);
         for (const auto& msg : trackstat_msgs)
         {
-          msg->header.stamp += sync_offset;
+          msg->header.stamp = rclcpp::Time(msg->header.stamp) + sync_offset;
           msg->header.frame_id = frame_id_;
-          trackstat_pub_.publish(msg);
+          trackstat_pub_->publish(msg);
         }
       }
       if (publish_imu_messages_)
       {
-        std::vector<novatel_gps_msgs::NovatelCorrectedImuDataPtr> novatel_imu_msgs;
+        std::vector<novatel_gps_msgs::msg::NovatelCorrectedImuData::SharedPtr> novatel_imu_msgs;
         gps_.GetNovatelCorrectedImuData(novatel_imu_msgs);
         for (const auto& msg : novatel_imu_msgs)
         {
-          msg->header.stamp += sync_offset;
+          msg->header.stamp = rclcpp::Time(msg->header.stamp) + sync_offset;
           msg->header.frame_id = imu_frame_id_;
-          novatel_imu_pub_.publish(msg);
+          novatel_imu_pub_->publish(msg);
         }
 
-        std::vector<sensor_msgs::ImuPtr> imu_msgs;
+        std::vector<sensor_msgs::msg::Imu::SharedPtr> imu_msgs;
         gps_.GetImuMessages(imu_msgs);
         for (const auto& msg : imu_msgs)
         {
-          msg->header.stamp += sync_offset;
+          msg->header.stamp = rclcpp::Time(msg->header.stamp) + sync_offset;
           msg->header.frame_id = imu_frame_id_;
-          imu_pub_.publish(msg);
+          imu_pub_->publish(msg);
         }
 
-        std::vector<novatel_gps_msgs::InscovPtr> inscov_msgs;
+        std::vector<novatel_gps_msgs::msg::Inscov::SharedPtr> inscov_msgs;
         gps_.GetInscovMessages(inscov_msgs);
         for (const auto& msg : inscov_msgs)
         {
-          msg->header.stamp += sync_offset;
+          msg->header.stamp = rclcpp::Time(msg->header.stamp) + sync_offset;
           msg->header.frame_id = imu_frame_id_;
-          inscov_pub_.publish(msg);
+          inscov_pub_->publish(msg);
         }
 
-        std::vector<novatel_gps_msgs::InspvaPtr> inspva_msgs;
+        std::vector<novatel_gps_msgs::msg::Inspva::SharedPtr> inspva_msgs;
         gps_.GetInspvaMessages(inspva_msgs);
         for (const auto& msg : inspva_msgs)
         {
-          msg->header.stamp += sync_offset;
+          msg->header.stamp = rclcpp::Time(msg->header.stamp) + sync_offset;
           msg->header.frame_id = imu_frame_id_;
-          inspva_pub_.publish(msg);
+          inspva_pub_->publish(msg);
         }
 
-        std::vector<novatel_gps_msgs::InsstdevPtr> insstdev_msgs;
+        std::vector<novatel_gps_msgs::msg::Insstdev::SharedPtr> insstdev_msgs;
         gps_.GetInsstdevMessages(insstdev_msgs);
         for (const auto& msg : insstdev_msgs)
         {
-          msg->header.stamp += sync_offset;
+          msg->header.stamp = rclcpp::Time(msg->header.stamp) + sync_offset;
           msg->header.frame_id = imu_frame_id_;
-          insstdev_pub_.publish(msg);
+          insstdev_pub_->publish(msg);
         }
       }
 
       for (const auto& msg : fix_msgs)
       {
-        msg->header.stamp += sync_offset;
+        msg->header.stamp = rclcpp::Time(msg->header.stamp) + sync_offset;
         msg->header.frame_id = frame_id_;
-        gps_pub_.publish(msg);
+        gps_pub_->publish(msg);
 
-        if (fix_pub_.getNumSubscribers() > 0)
+        if (1)//fix_pub_.getNumSubscribers() > 0)
         {
-          sensor_msgs::NavSatFixPtr fix_msg = ConvertGpsFixToNavSatFix(msg);
+          sensor_msgs::msg::NavSatFix::SharedPtr fix_msg = ConvertGpsFixToNavSatFix(msg);
 
-          fix_pub_.publish(fix_msg);
+          fix_pub_->publish(fix_msg);
         }
 
         // If the time between GPS message stamps is greater than 1.5
         // times the expected publish rate, increment the
         // publish_rate_warnings_ counter, which is used in diagnostics
-        if (last_published_ != ros::TIME_MIN &&
-            (msg->header.stamp - last_published_).toSec() > 1.5 * (1.0 / expected_rate_))
+        if (last_published_ != swri::TIME_MIN &&
+            swri::toSec(rclcpp::Time(msg->header.stamp) - last_published_) > 1.5 * (1.0 / expected_rate_))
         {
           publish_rate_warnings_++;
         }
@@ -837,9 +839,9 @@ namespace novatel_gps_driver
       }
     }
 
-    sensor_msgs::NavSatFixPtr ConvertGpsFixToNavSatFix(const gps_common::GPSFixPtr& msg)
+    sensor_msgs::msg::NavSatFix::SharedPtr ConvertGpsFixToNavSatFix(const gps_common_msgs::msg::GPSFix::SharedPtr& msg)
     {
-      sensor_msgs::NavSatFixPtr fix_msg = boost::make_shared<sensor_msgs::NavSatFix>();
+      sensor_msgs::msg::NavSatFix::SharedPtr fix_msg = std::make_shared<sensor_msgs::msg::NavSatFix>();
       fix_msg->header = msg->header;
       fix_msg->latitude = msg->latitude;
       fix_msg->longitude = msg->longitude;
@@ -847,42 +849,42 @@ namespace novatel_gps_driver
       fix_msg->position_covariance = msg->position_covariance;
       switch (msg->status.status)
       {
-        case gps_common::GPSStatus::STATUS_NO_FIX:
-          fix_msg->status.status = sensor_msgs::NavSatStatus::STATUS_NO_FIX;
+        case gps_common_msgs::msg::GPSStatus::STATUS_NO_FIX:
+          fix_msg->status.status = sensor_msgs::msg::NavSatStatus::STATUS_NO_FIX;
           break;
-        case gps_common::GPSStatus::STATUS_FIX:
-          fix_msg->status.status = sensor_msgs::NavSatStatus::STATUS_FIX;
+        case gps_common_msgs::msg::GPSStatus::STATUS_FIX:
+          fix_msg->status.status = sensor_msgs::msg::NavSatStatus::STATUS_FIX;
           break;
-        case gps_common::GPSStatus::STATUS_SBAS_FIX:
-          fix_msg->status.status = sensor_msgs::NavSatStatus::STATUS_SBAS_FIX;
+        case gps_common_msgs::msg::GPSStatus::STATUS_SBAS_FIX:
+          fix_msg->status.status = sensor_msgs::msg::NavSatStatus::STATUS_SBAS_FIX;
           break;
-        case gps_common::GPSStatus::STATUS_GBAS_FIX:
-          fix_msg->status.status = sensor_msgs::NavSatStatus::STATUS_GBAS_FIX;
+        case gps_common_msgs::msg::GPSStatus::STATUS_GBAS_FIX:
+          fix_msg->status.status = sensor_msgs::msg::NavSatStatus::STATUS_GBAS_FIX;
           break;
-        case gps_common::GPSStatus::STATUS_DGPS_FIX:
-        case gps_common::GPSStatus::STATUS_WAAS_FIX:
+        case gps_common_msgs::msg::GPSStatus::STATUS_DGPS_FIX:
+        case gps_common_msgs::msg::GPSStatus::STATUS_WAAS_FIX:
         default:
           ROS_WARN_ONCE("Unsupported fix status: %d", msg->status.status);
-          fix_msg->status.status = sensor_msgs::NavSatStatus::STATUS_FIX;
+          fix_msg->status.status = sensor_msgs::msg::NavSatStatus::STATUS_FIX;
           break;
       }
       switch (msg->position_covariance_type)
       {
-        case gps_common::GPSFix::COVARIANCE_TYPE_KNOWN:
-          fix_msg->position_covariance_type = sensor_msgs::NavSatFix::COVARIANCE_TYPE_KNOWN;
+        case gps_common_msgs::msg::GPSFix::COVARIANCE_TYPE_KNOWN:
+          fix_msg->position_covariance_type = sensor_msgs::msg::NavSatFix::COVARIANCE_TYPE_KNOWN;
           break;
-        case gps_common::GPSFix::COVARIANCE_TYPE_APPROXIMATED:
-          fix_msg->position_covariance_type = sensor_msgs::NavSatFix::COVARIANCE_TYPE_APPROXIMATED;
+        case gps_common_msgs::msg::GPSFix::COVARIANCE_TYPE_APPROXIMATED:
+          fix_msg->position_covariance_type = sensor_msgs::msg::NavSatFix::COVARIANCE_TYPE_APPROXIMATED;
           break;
-        case gps_common::GPSFix::COVARIANCE_TYPE_DIAGONAL_KNOWN:
-          fix_msg->position_covariance_type = sensor_msgs::NavSatFix::COVARIANCE_TYPE_DIAGONAL_KNOWN;
+        case gps_common_msgs::msg::GPSFix::COVARIANCE_TYPE_DIAGONAL_KNOWN:
+          fix_msg->position_covariance_type = sensor_msgs::msg::NavSatFix::COVARIANCE_TYPE_DIAGONAL_KNOWN;
           break;
-        case gps_common::GPSFix::COVARIANCE_TYPE_UNKNOWN:
-          fix_msg->position_covariance_type = sensor_msgs::NavSatFix::COVARIANCE_TYPE_UNKNOWN;
+        case gps_common_msgs::msg::GPSFix::COVARIANCE_TYPE_UNKNOWN:
+          fix_msg->position_covariance_type = sensor_msgs::msg::NavSatFix::COVARIANCE_TYPE_UNKNOWN;
           break;
         default:
           ROS_WARN_ONCE("Unsupported covariance type: %d", msg->position_covariance_type);
-          fix_msg->position_covariance_type = sensor_msgs::NavSatFix::COVARIANCE_TYPE_UNKNOWN;
+          fix_msg->position_covariance_type = sensor_msgs::msg::NavSatFix::COVARIANCE_TYPE_UNKNOWN;
           break;
       }
       // TODO Figure out how to set this based on info in a GPSFix
@@ -907,7 +909,7 @@ namespace novatel_gps_driver
         for (int32_t j = synced_j + 1; j < msg_times_.size(); j++)
         {
           // Offset is the difference between the sync time and message time
-          double offset = (sync_times_[i] - msg_times_[j]).toSec();
+          double offset = swri::toSec(sync_times_[i] - msg_times_[j]);
           if (std::fabs(offset) < 0.49)
           {
             // If the offset is less than 0.49 sec, the messages match
@@ -940,12 +942,12 @@ namespace novatel_gps_driver
     void FixDiagnostic(diagnostic_updater::DiagnosticStatusWrapper &status)
     {
       status.clear();
-      status.summary(diagnostic_msgs::DiagnosticStatus::OK, "Nominal");
+      status.summary(diagnostic_msgs::msg::DiagnosticStatus::OK, "Nominal");
 
       if (!last_novatel_position_)
       {
-        status.summary(diagnostic_msgs::DiagnosticStatus::WARN, "No Status");
-        NODELET_WARN("No GPS status data.");
+        status.summary(diagnostic_msgs::msg::DiagnosticStatus::WARN, "No Status");
+        ROS_WARN("No GPS status data.");
         return;
       }
 
@@ -956,12 +958,12 @@ namespace novatel_gps_driver
       status.add("Satellites Used", static_cast<int>(last_novatel_position_->num_satellites_used_in_solution));
       status.add("Software Version", last_novatel_position_->novatel_msg_header.receiver_software_version);
 
-      const novatel_gps_msgs::NovatelReceiverStatus& rcvr_status = last_novatel_position_->novatel_msg_header.receiver_status;
+      const novatel_gps_msgs::msg::NovatelReceiverStatus& rcvr_status = last_novatel_position_->novatel_msg_header.receiver_status;
       status.add("Status Code", rcvr_status.original_status_code);
 
       if (last_novatel_position_->novatel_msg_header.receiver_status.original_status_code != 0)
       {
-        uint8_t level = diagnostic_msgs::DiagnosticStatus::WARN;
+        uint8_t level = diagnostic_msgs::msg::DiagnosticStatus::WARN;
         std::string msg = "Status Warning";
         // If the antenna is disconnected/broken, this is an error
         if (rcvr_status.antenna_is_open ||
@@ -969,7 +971,7 @@ namespace novatel_gps_driver
             !rcvr_status.antenna_powered)
         {
           msg += " Antenna Problem";
-          level = diagnostic_msgs::DiagnosticStatus::ERROR;
+          level = diagnostic_msgs::msg::DiagnosticStatus::ERROR;
         }
         status.add("Error Flag", rcvr_status.error_flag?"true":"false");
         status.add("Temperature Flag", rcvr_status.temperature_flag?"true":"false");
@@ -994,24 +996,24 @@ namespace novatel_gps_driver
         status.add("Auxiliary1 Flag", rcvr_status.aux1_status_event_flag?"true":"false");
         status.add("Auxiliary2 Flag", rcvr_status.aux2_status_event_flag?"true":"false");
         status.add("Auxiliary3 Flag", rcvr_status.aux3_status_event_flag?"true":"false");
-        NODELET_WARN("Novatel status code: %d", rcvr_status.original_status_code);
+        ROS_WARN("Novatel status code: %d", rcvr_status.original_status_code);
         status.summary(level, msg);
       }
     }
 
     void SyncDiagnostic(diagnostic_updater::DiagnosticStatusWrapper &status)
     {
-      status.summary(diagnostic_msgs::DiagnosticStatus::OK, "Nominal");
+      status.summary(diagnostic_msgs::msg::DiagnosticStatus::OK, "Nominal");
 
-      if (last_sync_ == ros::TIME_MIN)
+      if (last_sync_ == swri::TIME_MIN)
       {
-        status.summary(diagnostic_msgs::DiagnosticStatus::WARN, "No Sync");
+        status.summary(diagnostic_msgs::msg::DiagnosticStatus::WARN, "No Sync");
         return;
       }
-      else if (last_sync_ < ros::Time::now() - ros::Duration(10))
+      else if (last_sync_ < nh_->now() - rclcpp::Duration(10,0))
       {
-        status.summary(diagnostic_msgs::DiagnosticStatus::ERROR, "Sync Stale");
-        NODELET_ERROR("GPS time synchronization is stale.");
+        status.summary(diagnostic_msgs::msg::DiagnosticStatus::ERROR, "Sync Stale");
+        ROS_ERROR("GPS time synchronization is stale.");
       }
 
       status.add("Last Sync", last_sync_);
@@ -1024,22 +1026,22 @@ namespace novatel_gps_driver
 
     void DeviceDiagnostic(diagnostic_updater::DiagnosticStatusWrapper &status)
     {
-      status.summary(diagnostic_msgs::DiagnosticStatus::OK, "Nominal");
+      status.summary(diagnostic_msgs::msg::DiagnosticStatus::OK, "Nominal");
 
       if (device_errors_ > 0)
       {
-        status.summary(diagnostic_msgs::DiagnosticStatus::ERROR, "Device Errors");
+        status.summary(diagnostic_msgs::msg::DiagnosticStatus::ERROR, "Device Errors");
       }
       else if (device_interrupts_ > 0)
       {
-        status.summary(diagnostic_msgs::DiagnosticStatus::WARN, "Device Interrupts");
-        NODELET_WARN("device interrupts detected <%s:%s>: %d",
+        status.summary(diagnostic_msgs::msg::DiagnosticStatus::WARN, "Device Interrupts");
+        ROS_WARN("device interrupts detected <%s:%s>: %d",
             connection_type_.c_str(), device_.c_str(), device_interrupts_);
       }
       else if (device_timeouts_)
       {
-        status.summary(diagnostic_msgs::DiagnosticStatus::WARN, "Device Timeouts");
-        NODELET_WARN("device timeouts detected <%s:%s>: %d",
+        status.summary(diagnostic_msgs::msg::DiagnosticStatus::WARN, "Device Timeouts");
+        ROS_WARN("device timeouts detected <%s:%s>: %d",
             connection_type_.c_str(), device_.c_str(), device_timeouts_);
       }
 
@@ -1054,12 +1056,12 @@ namespace novatel_gps_driver
 
     void GpsDiagnostic(diagnostic_updater::DiagnosticStatusWrapper &status)
     {
-      status.summary(diagnostic_msgs::DiagnosticStatus::OK, "Nominal");
+      status.summary(diagnostic_msgs::msg::DiagnosticStatus::OK, "Nominal");
 
       if (gps_parse_failures_ > 0)
       {
-        status.summary(diagnostic_msgs::DiagnosticStatus::WARN, "Parse Failures");
-        NODELET_WARN("gps parse failures detected <%s>: %d",
+        status.summary(diagnostic_msgs::msg::DiagnosticStatus::WARN, "Parse Failures");
+        ROS_WARN("gps parse failures detected <%s>: %d",
             hw_id_.c_str(), gps_parse_failures_);
       }
 
@@ -1072,21 +1074,21 @@ namespace novatel_gps_driver
 
     void DataDiagnostic(diagnostic_updater::DiagnosticStatusWrapper &status)
     {
-      status.summary(diagnostic_msgs::DiagnosticStatus::OK, "Nominal");
+      status.summary(diagnostic_msgs::msg::DiagnosticStatus::OK, "Nominal");
 
       double period = diagnostic_updater_.getPeriod();
       double measured_rate = measurement_count_ / period;
 
       if (measured_rate < 0.5 * expected_rate_)
       {
-        status.summary(diagnostic_msgs::DiagnosticStatus::ERROR, "Insufficient Data Rate");
-        NODELET_ERROR("insufficient data rate <%s>: %lf < %lf",
+        status.summary(diagnostic_msgs::msg::DiagnosticStatus::ERROR, "Insufficient Data Rate");
+        ROS_ERROR("insufficient data rate <%s>: %lf < %lf",
             hw_id_.c_str(), measured_rate, expected_rate_);
       }
       else if (measured_rate < 0.95 * expected_rate_)
       {
-        status.summary(diagnostic_msgs::DiagnosticStatus::WARN, "Insufficient Data Rate");
-        NODELET_WARN("insufficient data rate <%s>: %lf < %lf",
+        status.summary(diagnostic_msgs::msg::DiagnosticStatus::WARN, "Insufficient Data Rate");
+        ROS_WARN("insufficient data rate <%s>: %lf < %lf",
             hw_id_.c_str(), measured_rate, expected_rate_);
       }
 
@@ -1097,9 +1099,9 @@ namespace novatel_gps_driver
 
     void RateDiagnostic(diagnostic_updater::DiagnosticStatusWrapper &status)
     {
-      status.summary(diagnostic_msgs::DiagnosticStatus::OK, "Nominal Publish Rate");
+      status.summary(diagnostic_msgs::msg::DiagnosticStatus::OK, "Nominal Publish Rate");
 
-      double elapsed = (ros::Time::now() - last_published_).toSec();
+      double elapsed = swri::toSec(nh_->now() - last_published_);
       bool gap_detected = false;
       if (elapsed > 2.0 / expected_rate_)
       {
@@ -1109,8 +1111,8 @@ namespace novatel_gps_driver
 
       if (publish_rate_warnings_ > 1 || gap_detected)
       {
-        status.summary(diagnostic_msgs::DiagnosticStatus::WARN, "Insufficient Publish Rate");
-        NODELET_WARN("publish rate failures detected <%s>: %d",
+        status.summary(diagnostic_msgs::msg::DiagnosticStatus::WARN, "Insufficient Publish Rate");
+        ROS_WARN("publish rate failures detected <%s>: %d",
             hw_id_.c_str(), publish_rate_warnings_);
       }
 
@@ -1122,5 +1124,6 @@ namespace novatel_gps_driver
 }
 
 // Register nodelet plugin
-#include <swri_nodelet/class_list_macros.h>
-SWRI_NODELET_EXPORT_CLASS(novatel_gps_driver, NovatelGpsNodelet)
+#include "class_loader/class_loader_register_macro.h"
+
+CLASS_LOADER_REGISTER_CLASS(novatel_gps_driver::NovatelGpsNodelet, swri::Node)

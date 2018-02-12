@@ -28,7 +28,7 @@
 // *****************************************************************************
 
 #include <novatel_gps_driver/parsers/gprmc.h>
-#include <boost/make_shared.hpp>
+#include <sstream>
 #include <swri_string_util/string_util.h>
 
 const std::string novatel_gps_driver::GprmcParser::MESSAGE_NAME = "GPRMC";
@@ -43,7 +43,7 @@ const std::string novatel_gps_driver::GprmcParser::GetMessageName() const
   return MESSAGE_NAME;
 }
 
-novatel_gps_msgs::GprmcPtr novatel_gps_driver::GprmcParser::ParseAscii(const novatel_gps_driver::NmeaSentence& sentence) throw(ParseException)
+novatel_gps_msgs::msg::Gprmc::SharedPtr novatel_gps_driver::GprmcParser::ParseAscii(const novatel_gps_driver::NmeaSentence& sentence) throw(ParseException)
 {
   // Check the length first -- should be 15 elements long
   const size_t EXPECTED_LEN = 13;
@@ -56,7 +56,7 @@ novatel_gps_msgs::GprmcPtr novatel_gps_driver::GprmcParser::ParseAscii(const nov
   }
 
   bool success = true;
-  novatel_gps_msgs::GprmcPtr msg = boost::make_shared<novatel_gps_msgs::Gprmc>();
+  novatel_gps_msgs::msg::Gprmc::SharedPtr msg = std::make_shared<novatel_gps_msgs::msg::Gprmc>();
   msg->message_id = sentence.body[0];
 
   if (sentence.body[1].empty() || sentence.body[1] == "0")

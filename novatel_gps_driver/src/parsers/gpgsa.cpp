@@ -28,7 +28,7 @@
 // *****************************************************************************
 
 #include <novatel_gps_driver/parsers/gpgsa.h>
-#include <boost/make_shared.hpp>
+#include <sstream>
 
 const std::string novatel_gps_driver::GpgsaParser::MESSAGE_NAME = "GPGSA";
 
@@ -42,7 +42,7 @@ const std::string novatel_gps_driver::GpgsaParser::GetMessageName() const
   return MESSAGE_NAME;
 }
 
-novatel_gps_msgs::GpgsaPtr novatel_gps_driver::GpgsaParser::ParseAscii(const novatel_gps_driver::NmeaSentence& sentence) throw(ParseException)
+novatel_gps_msgs::msg::Gpgsa::SharedPtr novatel_gps_driver::GpgsaParser::ParseAscii(const novatel_gps_driver::NmeaSentence& sentence) throw(ParseException)
 {
   // Check the length first -- should be 18 elements long
   const size_t LENGTH = 18;
@@ -54,7 +54,7 @@ novatel_gps_msgs::GpgsaPtr novatel_gps_driver::GpgsaParser::ParseAscii(const nov
     throw ParseException(error.str());
   }
 
-  novatel_gps_msgs::GpgsaPtr msg = boost::make_shared<novatel_gps_msgs::Gpgsa>();
+  novatel_gps_msgs::msg::Gpgsa::SharedPtr msg = std::make_shared<novatel_gps_msgs::msg::Gpgsa>();
   msg->message_id = sentence.body[0];
   msg->auto_manual_mode = sentence.body[1];
   ParseUInt8(sentence.body[2], msg->fix_mode);

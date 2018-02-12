@@ -29,7 +29,7 @@
 
 #include <novatel_gps_driver/parsers/header.h>
 
-#include <ros/ros.h>
+#include <sstream>
 
 uint32_t novatel_gps_driver::HeaderParser::GetMessageId() const
 {
@@ -41,12 +41,12 @@ const std::string novatel_gps_driver::HeaderParser::GetMessageName() const
   return "HEADER";
 }
 
-novatel_gps_msgs::NovatelMessageHeader novatel_gps_driver::HeaderParser::ParseBinary(
+novatel_gps_msgs::msg::NovatelMessageHeader novatel_gps_driver::HeaderParser::ParseBinary(
     const novatel_gps_driver::BinaryMessage& bin_msg) throw(ParseException)
 {
   // No point in checking whether the port identifier is valid here, because
   // the variable's range is 0-255 and this array has 256 values in it.
-  novatel_gps_msgs::NovatelMessageHeader msg;
+  novatel_gps_msgs::msg::NovatelMessageHeader msg;
   msg.port = PORT_IDENTIFIERS[bin_msg.header_.port_address_];
   msg.sequence_num = bin_msg.header_.sequence_;
   msg.percent_idle_time = bin_msg.header_.idle_time_;
@@ -100,7 +100,7 @@ novatel_gps_msgs::NovatelMessageHeader novatel_gps_driver::HeaderParser::ParseBi
   return msg;
 }
 
-novatel_gps_msgs::NovatelMessageHeader novatel_gps_driver::HeaderParser::ParseAscii(
+novatel_gps_msgs::msg::NovatelMessageHeader novatel_gps_driver::HeaderParser::ParseAscii(
     const novatel_gps_driver::NovatelSentence& sentence) throw(ParseException)
 {
   if (sentence.header.size() != NOVATEL_MESSAGE_HEADER_LENGTH)
@@ -114,7 +114,7 @@ novatel_gps_msgs::NovatelMessageHeader novatel_gps_driver::HeaderParser::ParseAs
 
   bool valid = true;
 
-  novatel_gps_msgs::NovatelMessageHeader msg;
+  novatel_gps_msgs::msg::NovatelMessageHeader msg;
   msg.message_name = sentence.header[0];
   msg.port = sentence.header[1];
   valid = valid && ParseUInt32(sentence.header[2], msg.sequence_num);
