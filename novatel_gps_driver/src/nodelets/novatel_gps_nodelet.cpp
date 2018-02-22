@@ -420,7 +420,7 @@ namespace novatel_gps_driver
             }
 
             // Spin once to let the ROS callbacks fire
-            rclcpp::spin_some(nh_);
+            //rclcpp::spin_some(nh_);
             // Sleep for a microsecond to prevent CPU hogging
             boost::this_thread::sleep(boost::posix_time::microseconds(1));
           }  // While (gps_.IsConnected() && ros::ok()) (inner loop to process data from device)

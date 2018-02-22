@@ -8,7 +8,12 @@ if(NOT CMAKE_CXX_STANDARD)
 endif()
 
 find_package(ament_cmake REQUIRED)
+find_package(diagnostic_msgs REQUIRED)
+find_package(gps_common_msgs REQUIRED)
 find_package(novatel_gps_msgs REQUIRED)
+find_package(sensor_msgs REQUIRED)
+find_package(swri_math_util REQUIRED)
+find_package(swri_serial_util REQUIRED)
 find_package(swri_string_util REQUIRED)
 find_package(swri_roscpp REQUIRED)
 
@@ -27,7 +32,7 @@ set(DEPS diagnostic_msgs diagnostic_updater gps_common_msgs nav_msgs
 
 set(BUILD_DEPENDS ${DEPS})
 
-find_package(Boost REQUIRED COMPONENTS system)
+find_package(Boost REQUIRED COMPONENTS system thread)
 
 # libpcap doesn't provide PkgConfig or CMake modules
 find_library(libpcap_LIBRARIES pcap)
@@ -37,7 +42,7 @@ else()
   set(libpcap_FOUND TRUE)
 endif()
 
-add_library(${PROJECT_NAME} SHARED
+add_library(${PROJECT_NAME}_core SHARED
   src/novatel_gps.cpp
   src/novatel_message_extractor.cpp
   src/parsers/bestpos.cpp
@@ -55,20 +60,29 @@ add_library(${PROJECT_NAME} SHARED
   src/parsers/range.cpp
   src/parsers/time.cpp
   src/parsers/trackstat.cpp)
-target_link_libraries(${PROJECT_NAME} ${LIBS} ${Boost_LIBRARIES}
+target_link_libraries(${PROJECT_NAME}_core ${LIBS} ${Boost_LIBRARIES}
   ${libpcap_LIBRARIES})
-set_target_properties(${PROJECT_NAME} PROPERTIES COMPILE_FLAGS "-std=c++11")
-ament_target_dependencies(${PROJECT_NAME} 
+set_target_properties(${PROJECT_NAME}_core PROPERTIES COMPILE_FLAGS "-std=c++11")
+ament_target_dependencies(${PROJECT_NAME}_core
+  Boost
   novatel_gps_msgs
   swri_roscpp
+  swri_serial_util
+  swri_string_util
 )
 
 ### Nodelets ###
-add_library(${PROJECT_NAME}_nodelets SHARED src/nodelets/novatel_gps_nodelet.cpp)
-target_link_libraries(${PROJECT_NAME}_nodelets ${LIBS} ${PROJECT_NAME})
-set_target_properties(${PROJECT_NAME}_nodelets
+add_library(${PROJECT_NAME} SHARED src/nodelets/novatel_gps_nodelet.cpp)
+target_link_libraries(${PROJECT_NAME} ${LIBS} ${PROJECT_NAME}_core)
+set_target_properties(${PROJECT_NAME}
   PROPERTIES
   COMPILE_FLAGS "-std=c++11")
+ament_target_dependencies(${PROJECT_NAME}
+  diagnostic_msgs
+  gps_common_msgs
+  sensor_msgs
+  swri_math_util
+)
 
 ### Nodes ###
 #swri_nodelet_add_node(novatel_gps_node ${PROJECT_NAME} NovatelGpsNodelet)
@@ -93,7 +107,7 @@ endif()
 install(TARGETS 
   #novatel_gps_node
   ${PROJECT_NAME}
-  ${PROJECT_NAME}_nodelets
+  ${PROJECT_NAME}_core
   ARCHIVE
   DESTINATION lib
   LIBRARY
