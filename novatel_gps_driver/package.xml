@@ -17,6 +17,7 @@
   <depend>diagnostic_msgs</depend>
   <depend>diagnostic_updater</depend>
   <depend>gps_common</depend>
+  <depend>gps_common_msgs</depend>
   <depend>libpcap</depend>
   <depend>nav_msgs</depend>
   <depend>nodelet</depend>
